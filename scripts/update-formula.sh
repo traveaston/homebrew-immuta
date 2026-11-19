@@ -1,22 +1,15 @@
 #!/usr/bin/env bash
 # Pin Formula/immuta.rb to a specific Immuta CLI release.
 #
-# Every artifact is downloaded and checked against the vendor's published
-# SHA256SUMS, and the macOS binaries are checked against Immuta's Apple
-# Developer ID signature, before anything is written. The script edits the
-# formula and stops -- it never commits, tags, or pushes.
+# The release is downloaded and verified by fetch-release.sh before anything is
+# written. The script edits the formula and stops -- it never commits, tags, or
+# pushes.
 set -euo pipefail
 
-BASE_URL="https://immuta-platform-artifacts.s3.amazonaws.com/cli"
 TARGETS=(darwin_amd64 darwin_arm64 linux_amd64 linux_arm64)
 
-# The SHA256SUMS file lives in the same bucket as the artifacts, so on its own it
-# proves only that the download was not corrupted in transit. Immuta's Apple
-# Developer ID signature is an independent root of trust, so verify it too where
-# the tooling exists to do so.
-APPLE_TEAM_AUTHORITY="Developer ID Application: Immuta, Inc. (VSQ84595BS)"
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$SCRIPTS")"
 FORMULA="$ROOT/Formula/immuta.rb"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -24,43 +17,11 @@ die() { echo "error: $*" >&2; exit 1; }
 version="${1:-}"
 [[ -n $version ]] || die "usage: $(basename "$0") <version>   (e.g. $(basename "$0") 1.4.0)"
 version="${version#v}"
-[[ $version =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "'$version' is not a version number"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-echo "==> Downloading v$version"
-curl -fsSL --max-time 60 -o "$work/SHA256SUMS" "$BASE_URL/v$version/immuta_cli_SHA256SUMS" ||
-  die "no checksums at $BASE_URL/v$version/ -- is v$version a real release?"
-for target in "${TARGETS[@]}"; do
-  # Bail on a stalled transfer rather than a slow one: these are ~12 MB each and
-  # the bucket is not always fast.
-  curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
-    --retry 3 --retry-delay 2 -o "$work/immuta_cli_$target" \
-    "$BASE_URL/v$version/immuta_cli_$target" || die "could not download immuta_cli_$target"
-done
-
-echo "==> Verifying checksums"
-grep -v windows "$work/SHA256SUMS" > "$work/SHA256SUMS.unix"
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$work" && sha256sum -c SHA256SUMS.unix) || die "checksum mismatch"
-else
-  (cd "$work" && shasum -a 256 -c SHA256SUMS.unix) || die "checksum mismatch"
-fi
-
-if command -v codesign >/dev/null 2>&1; then
-  echo "==> Verifying macOS code signatures"
-  for target in darwin_amd64 darwin_arm64; do
-    codesign --verify --strict "$work/immuta_cli_$target" 2>/dev/null ||
-      die "immuta_cli_$target has an invalid code signature"
-    authority="$(codesign -dvvv "$work/immuta_cli_$target" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
-    [[ $authority == "$APPLE_TEAM_AUTHORITY" ]] ||
-      die "immuta_cli_$target is signed by '$authority', expected '$APPLE_TEAM_AUTHORITY'"
-    echo "immuta_cli_$target: $authority"
-  done
-else
-  echo "==> Skipping code signature check (codesign not available on this platform)"
-fi
+"$SCRIPTS/fetch-release.sh" "$version" "$work"
 
 echo "==> Rewriting $(basename "$FORMULA")"
 sums=""
