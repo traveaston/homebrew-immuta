@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 # Pin Formula/immuta.rb to a specific Immuta CLI release.
-#
-# The release is downloaded and verified by fetch-release.sh before anything is
-# written. The script edits the formula and stops -- it never commits, tags, or
-# pushes.
 set -euo pipefail
 
 TARGETS=(darwin_amd64 darwin_arm64 linux_amd64 linux_arm64)
