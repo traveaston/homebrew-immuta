@@ -1,0 +1,95 @@
+name: packslip
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/packslip.yml
+      - Formula/**
+      - scripts/**
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish, such as v1.4.0
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: packslip-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PACKSLIP_VERSION: 1.11.4
+  PACKSLIP_DARWIN_ARM64_SHA256: a97d048677de32ade64ea353d85c4aeebc8dc1e2adee51f83e0cb0311e135e52
+
+jobs:
+  packslip:
+    runs-on: macos-15
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      DRY_RUN: ${{ github.event_name == 'pull_request' }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+
+      - name: Read the pinned version
+        id: version
+        run: |
+          pinned="$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/immuta.rb)"
+          if [[ $DRY_RUN != true && ${TAG#v} != "$pinned" ]]; then
+            echo "tag $TAG does not match the formula's version $pinned" >&2
+            exit 1
+          fi
+          echo "version=$pinned" >> "$GITHUB_OUTPUT"
+
+      - name: Install packslip
+        run: |
+          name="packslip-v${PACKSLIP_VERSION}-darwin-arm64"
+          gh release download "v${PACKSLIP_VERSION}" --repo jdx/packslip \
+            --pattern "$name.tar.xz" --dir "$RUNNER_TEMP"
+          echo "$PACKSLIP_DARWIN_ARM64_SHA256  $RUNNER_TEMP/$name.tar.xz" | shasum -a 256 -c
+          tar -xJf "$RUNNER_TEMP/$name.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+
+      - name: Create and sign the packslip
+        run: |
+          if [[ $DRY_RUN == true ]]; then
+            packslip keygen --out "$RUNNER_TEMP/dry-run.key"
+            sign=(--key "$RUNNER_TEMP/dry-run.key" --no-log)
+          else
+            sign=()
+          fi
+          scripts/create-packslip.sh "${{ steps.version.outputs.version }}" packslip "${sign[@]}"
+
+      - name: Verify the packslip
+        run: |
+          if [[ $DRY_RUN == true ]]; then
+            trust=(--pubkey "$RUNNER_TEMP/dry-run.pub" --allow-unlogged)
+          else
+            trust=(--source-repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+              --issuer https://token.actions.githubusercontent.com)
+          fi
+          packslip verify packslip/packslip.sigstore.json "${trust[@]}"
+
+      - name: Show the manifest
+        run: jq -r .dsseEnvelope.payload packslip/packslip.sigstore.json | base64 -d | jq .predicate
+
+      - name: Publish to the release
+        if: env.DRY_RUN != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "Immuta CLI $VERSION" \
+              --notes "Signed packslip for Immuta CLI v$VERSION, for \`mise use packslip:$GITHUB_REPOSITORY\`. The binaries are Immuta's, served from Immuta's own bucket; see the [release notes](https://documentation.immuta.com/latest/releases/releases/immuta-cli-release-notes#immuta-cli-v$VERSION)."
+          fi
+          gh release upload "$TAG" packslip/packslip.sigstore.json --repo "$GITHUB_REPOSITORY" --clobber

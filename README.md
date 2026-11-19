@@ -30,6 +30,20 @@ immuta --version
 
 Bash, zsh, and fish completions are installed automatically.
 
+## Install with mise
+
+Each pinned version is also published as a signed
+[packslip](https://mise.jdx.dev/dev-tools/backends/packslip.html), so
+[mise](https://mise.jdx.dev) can install it without Homebrew:
+
+```sh
+mise use -g packslip:traveaston/homebrew-immuta
+```
+
+mise downloads the binary from Immuta's bucket, checks it against the digest in
+the packslip, and checks that this repo's release workflow signed that packslip.
+With mise activated, shell completions load on demand.
+
 ## What it pins
 
 The formula pins a single Immuta CLI version across four platforms:
@@ -59,6 +73,18 @@ Apple Developer ID signature, then rewrites the formula and prints the diff. It
 stops there. Review the diff, run `brew style Formula/immuta.rb` and
 `brew audit --formula immuta`, and commit.
 
+Once the bump is merged, publish it for mise by pushing a matching tag:
+
+```sh
+git tag v1.5.0 && git push origin v1.5.0
+```
+
+The `packslip` workflow re-runs the same download and verification
+(`scripts/fetch-release.sh`, on macOS so the code signatures are checked), signs
+a packslip keylessly with the workflow's GitHub OIDC identity, and attaches it to
+a GitHub release for the tag. It refuses a tag that does not match the formula's
+version.
+
 The artifact bucket denies `ListBucket`, so new versions cannot be discovered by
 enumerating the prefix — `check-version.sh` reads the
 [release notes](https://documentation.immuta.com/latest/releases/releases/immuta-cli-release-notes)
@@ -80,6 +106,10 @@ As of August 2026 the newest release is still v1.4.0, from July 2024.
   with a hardened runtime, which is an independent root of trust;
   `update-formula.sh` checks it on every bump. Immuta publishes no signatures for
   the Linux binaries, so those rest on the checksums alone.
+- **The packslip is a repackager's.** It is signed by this repo, not by Immuta,
+  and says so (`attested_by: repackager`), listing the checks above as its
+  evidence. It is no stronger than those checks. What it adds is that mise pins
+  the signing workflow, so a later release signed by anything else is refused.
 
 ## Credentials
 
