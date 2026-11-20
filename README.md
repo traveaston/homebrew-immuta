@@ -12,15 +12,25 @@ It is maintained personally, on a best-effort basis.
 ## Install
 
 ```sh
+brew install traveaston/immuta/immuta
+```
+
+Installing by fully-qualified name taps and trusts the formula in one step.
+
+To install by short name instead, tap and trust it first:
+
+```sh
 brew tap traveaston/immuta
+brew trust --formula traveaston/immuta/immuta
 brew install immuta
 ```
 
-Or just install using the fully-qualified name, automatically tapping.
-
-```sh
-brew install traveaston/immuta/immuta
-```
+The `brew trust` step is required as of
+[Homebrew 6.0.0](https://docs.brew.sh/Tap-Trust): a formula is executable Ruby, not
+plain metadata, so Homebrew no longer loads one from a third-party tap until you say
+so. Trusting the formula rather than the whole tap (`brew trust traveaston/immuta`)
+is deliberate — whole-tap trust also covers every formula added here in future,
+sight unseen.
 
 Then check it works:
 
